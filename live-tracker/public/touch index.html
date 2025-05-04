@@ -1,0 +1,302 @@
+<!-- index.html - Main page with map and controls -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Location Tracker</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        #map {
+            height: 100vh;
+            width: 100%;
+        }
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+        .friend-list {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .friend-item {
+            margin-bottom: 5px;
+            padding: 5px;
+            cursor: pointer;
+        }
+        .friend-item:hover {
+            background-color: #f0f0f0;
+        }
+        .active {
+            background-color: #e0e0e0;
+        }
+        button {
+            margin: 5px 0;
+            padding: 8px 12px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        input {
+            padding: 8px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div class="control-panel">
+        <h3>Location Controls</h3>
+        <button id="shareLocation">Share My Location</button>
+        <button id="stopSharing">Stop Sharing</button>
+        <div id="shareLink" style="margin-top: 10px;"></div>
+        <div id="status"></div>
+    </div>
+    
+    <div class="friend-list">
+        <h3>Friends</h3>
+        <div id="friendsList"></div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Initialize the map
+        const map = L.map('map').setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // Store markers and user data
+        const markers = {};
+        let myUserId = localStorage.getItem('userId') || generateUserId();
+        let watchId = null;
+        let socket = null;
+        
+        // DOM elements
+        const shareLocationBtn = document.getElementById('shareLocation');
+        const stopSharingBtn = document.getElementById('stopSharing');
+        const statusDiv = document.getElementById('status');
+        const shareLinkDiv = document.getElementById('shareLink');
+        const friendsListDiv = document.getElementById('friendsList');
+
+        // Store user ID in local storage
+        localStorage.setItem('userId', myUserId);
+
+        // Connect to WebSocket server
+        function connectWebSocket() {
+            // Replace with your actual WebSocket server URL
+            socket = new WebSocket('ws://your-websocket-server.com');
+            
+            socket.onopen = function() {
+                statusDiv.textContent = 'Connected to server';
+                
+                // Send initial user data
+                socket.send(JSON.stringify({
+                    type: 'register',
+                    userId: myUserId,
+                    name: 'Me'
+                }));
+            };
+            
+            socket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'location_update') {
+                    updateLocationOnMap(data.userId, data.lat, data.lng, data.name);
+                } else if (data.type === 'user_list') {
+                    updateFriendsList(data.users);
+                }
+            };
+            
+            socket.onclose = function() {
+                statusDiv.textContent = 'Disconnected from server';
+                setTimeout(connectWebSocket, 5000); // Try to reconnect
+            };
+            
+            socket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                statusDiv.textContent = 'Connection error';
+            };
+        }
+
+        // Start sharing location
+        shareLocationBtn.addEventListener('click', function() {
+            if (navigator.geolocation) {
+                shareLocationBtn.disabled = true;
+                stopSharingBtn.disabled = false;
+                statusDiv.textContent = 'Sharing your location...';
+                
+                // Watch position with geolocation API
+                watchId = navigator.geolocation.watchPosition(
+                    function(position) {
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+                        
+                        // Update my location on the map
+                        updateLocationOnMap(myUserId, lat, lng, 'Me');
+                        
+                        // Send location to server
+                        if (socket && socket.readyState === WebSocket.OPEN) {
+                            socket.send(JSON.stringify({
+                                type: 'location_update',
+                                userId: myUserId,
+                                lat: lat,
+                                lng: lng,
+                                name: 'Me'
+                            }));
+                        }
+                        
+                        // Generate shareable link
+                        const shareLink = `${window.location.origin}?track=${myUserId}`;
+                        shareLinkDiv.innerHTML = `<p>Share this link with friends:</p>
+                            <input type="text" value="${shareLink}" readonly>
+                            <button onclick="copyShareLink()">Copy</button>`;
+                    },
+                    function(error) {
+                        console.error('Error getting location:', error);
+                        statusDiv.textContent = 'Error: ' + error.message;
+                        shareLocationBtn.disabled = false;
+                        stopSharingBtn.disabled = true;
+                    },
+                    { 
+                        enableHighAccuracy: true,
+                        maximumAge: 30000,
+                        timeout: 27000
+                    }
+                );
+            } else {
+                statusDiv.textContent = 'Geolocation is not supported by this browser.';
+            }
+        });
+
+        // Stop sharing location
+        stopSharingBtn.addEventListener('click', function() {
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+                
+                // Send stop sharing message to server
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({
+                        type: 'stop_sharing',
+                        userId: myUserId
+                    }));
+                }
+                
+                // Remove marker from map
+                if (markers[myUserId]) {
+                    map.removeLayer(markers[myUserId]);
+                    delete markers[myUserId];
+                }
+                
+                statusDiv.textContent = 'Location sharing stopped';
+                shareLocationBtn.disabled = false;
+                stopSharingBtn.disabled = true;
+                shareLinkDiv.innerHTML = '';
+            }
+        });
+
+        // Update location on the map
+        function updateLocationOnMap(userId, lat, lng, name) {
+            // If marker already exists, update its position
+            if (markers[userId]) {
+                markers[userId].setLatLng([lat, lng]);
+            } else {
+                // Create new marker
+                markers[userId] = L.marker([lat, lng]).addTo(map);
+            }
+            
+            // Update popup content
+            markers[userId].bindPopup(`<b>${name}</b><br>Last updated: ${new Date().toLocaleTimeString()}`);
+            
+            // If it's our own location, center the map
+            if (userId === myUserId) {
+                map.setView([lat, lng], 15);
+            }
+        }
+
+        // Update friends list
+        function updateFriendsList(users) {
+            friendsListDiv.innerHTML = '';
+            
+            users.forEach(user => {
+                if (user.userId !== myUserId) {
+                    const friendDiv = document.createElement('div');
+                    friendDiv.className = 'friend-item';
+                    friendDiv.textContent = user.name;
+                    friendDiv.addEventListener('click', function() {
+                        // Center map on friend's location
+                        if (markers[user.userId]) {
+                            map.setView(markers[user.userId].getLatLng(), 15);
+                            markers[user.userId].openPopup();
+                        }
+                    });
+                    friendsListDiv.appendChild(friendDiv);
+                }
+            });
+        }
+
+        // Generate a unique user ID
+        function generateUserId() {
+            return Date.now().toString(36) + Math.random().toString(36).substring(2);
+        }
+
+        // Copy share link to clipboard
+        window.copyShareLink = function() {
+            const linkInput = shareLinkDiv.querySelector('input');
+            linkInput.select();
+            document.execCommand('copy');
+            alert('Link copied to clipboard!');
+        };
+
+        // Check if we should track someone
+        function checkForTrackingParameter() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const trackUserId = urlParams.get('track');
+            
+            if (trackUserId) {
+                // Send tracking request to server
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({
+                        type: 'track_user',
+                        targetUserId: trackUserId
+                    }));
+                }
+            }
+        }
+
+        // Initialize
+        connectWebSocket();
+        checkForTrackingParameter();
+        stopSharingBtn.disabled = true;
+    </script>
+</body>
+</html>
