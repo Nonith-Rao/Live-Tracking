@@ -1,4 +1,3 @@
-// server.js - Node.js backend with WebSocket support
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
@@ -9,8 +8,26 @@ const { v4: uuidv4 } = require('uuid');
 const app = express();
 const server = http.createServer(app);
 
-// Serve static files
+// Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
+console.log('Serving static files from:', path.join(__dirname, 'public'));
+
+// Health check endpoint for Render
+app.get('/health', (req, res) => {
+    res.status(200).send('OK');
+});
+
+// Fallback to serve index.html for all unmatched routes
+app.get('*', (req, res) => {
+    const indexPath = path.join(__dirname, 'index.html');
+    console.log(`Attempting to serve: ${indexPath}`);
+    res.sendFile(indexPath, (err) => {
+        if (err) {
+            console.error('Error serving index.html:', err);
+            res.status(404).send('Cannot GET / - index.html not found');
+        }
+    });
+});
 
 // WebSocket server
 const wss = new WebSocket.Server({ server });
@@ -22,18 +39,16 @@ const locations = {};
 // Handle WebSocket connections
 wss.on('connection', (ws) => {
     console.log('A client connected');
-    
-    // Generate a temporary ID for this connection
+
     const connectionId = uuidv4();
-    
+
     ws.on('message', (message) => {
+        console.log('Received WebSocket message:', message.toString());
         try {
             const data = JSON.parse(message);
-            
-            // Handle different message types
+
             switch (data.type) {
                 case 'register':
-                    // Register user
                     const userId = data.userId;
                     users[userId] = {
                         userId: userId,
@@ -41,21 +56,13 @@ wss.on('connection', (ws) => {
                         connectionId: connectionId,
                         ws: ws
                     };
-                    
-                    // Associate this connection with the user ID
                     ws.userId = userId;
-                    
                     console.log(`User registered: ${userId}`);
-                    
-                    // Send current user list to everyone
                     broadcastUserList();
-                    
-                    // Send existing locations to new user
                     sendLocations(ws);
                     break;
-                    
+
                 case 'location_update':
-                    // Update user's location
                     locations[data.userId] = {
                         userId: data.userId,
                         lat: data.lat,
@@ -63,26 +70,27 @@ wss.on('connection', (ws) => {
                         name: data.name || 'Anonymous',
                         timestamp: Date.now()
                     };
-                    
-                    // Broadcast location update to all clients
+                    console.log(`Location updated for ${data.userId}`);
                     broadcastLocationUpdate(data);
                     break;
-                    
+
                 case 'stop_sharing':
-                    // Remove user's location data
                     if (locations[data.userId]) {
                         delete locations[data.userId];
+                        console.log(`Stopped sharing for ${data.userId}`);
                         broadcastLocationStop(data.userId);
                     }
                     break;
-                    
+
                 case 'track_user':
-                    // Send specific user's location if available
+                    console.log(`Tracking user: ${data.targetUserId}`);
                     if (locations[data.targetUserId]) {
                         ws.send(JSON.stringify({
                             type: 'location_update',
                             ...locations[data.targetUserId]
                         }));
+                    } else {
+                        console.log(`No location found for ${data.targetUserId}`);
                     }
                     break;
             }
@@ -90,11 +98,9 @@ wss.on('connection', (ws) => {
             console.error('Error processing message:', error);
         }
     });
-    
+
     ws.on('close', () => {
         console.log('Client disconnected');
-        
-        // Remove user from users list
         if (ws.userId && users[ws.userId]) {
             delete users[ws.userId];
             broadcastUserList();
@@ -108,12 +114,10 @@ function broadcastUserList() {
         userId: user.userId,
         name: user.name
     }));
-    
     const message = JSON.stringify({
         type: 'user_list',
         users: userList
     });
-    
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             client.send(message);
@@ -131,7 +135,6 @@ function broadcastLocationUpdate(data) {
         name: data.name || 'Anonymous',
         timestamp: Date.now()
     });
-    
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             client.send(message);
@@ -145,7 +148,6 @@ function broadcastLocationStop(userId) {
         type: 'location_stop',
         userId: userId
     });
-    
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             client.send(message);
@@ -156,7 +158,6 @@ function broadcastLocationStop(userId) {
 // Send current locations to a specific client
 function sendLocations(ws) {
     Object.values(locations).forEach(location => {
-        // Only send locations that are less than 5 minutes old
         if (Date.now() - location.timestamp < 5 * 60 * 1000) {
             ws.send(JSON.stringify({
                 type: 'location_update',
@@ -169,14 +170,17 @@ function sendLocations(ws) {
 // Clean up old location data every minute
 setInterval(() => {
     const now = Date.now();
-    
-    // Remove locations older than 5 minutes
     Object.keys(locations).forEach(userId => {
         if (now - locations[userId].timestamp > 5 * 60 * 1000) {
             delete locations[userId];
         }
     });
 }, 60 * 1000);
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+});
 
 // Start the server
 const PORT = process.env.PORT || 3000;
