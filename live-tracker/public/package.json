@@ -1,14 +1,18 @@
 {
-  "name": "live-location-tracker",
-  "version": "1.0.0",
-  "description": "Live location tracking application",
-  "main": "server.js",
-  "dependencies": {
-    "express": "^4.18.2",
-    "ws": "^8.13.0",
-    "uuid": "^9.0.0"
-  },
-  "scripts": {
-    "start": "node touch_server.js"
-  }
+    "name": "live-location-tracker",
+    "version": "1.0.0",
+    "description": "Live location tracking application",
+    "main": "server.js",
+    "engines": {
+        "node": "16.x"
+    },
+    "dependencies": {
+        "cors": "^2.8.5",
+        "express": "^4.18.2",
+        "uuid": "^9.0.0",
+        "ws": "^8.13.0"
+    },
+    "scripts": {
+        "start": "node server.js"
+    }
 }
