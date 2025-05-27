@@ -8,7 +8,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
-        origin: 'http://localhost:3000', // Update to match frontend port
+        origin: '*', // Update to match frontend port
         methods: ['GET', 'POST'],
     },
 });
